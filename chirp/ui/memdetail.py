@@ -68,8 +68,15 @@ class ValueEditor:
 
         if self._name.startswith("extra_"):
             try:
+<<<<<<< HEAD
                 self._memory.extra[self._name.split("_", 1)[1]].value = newval
             except settings.InternalError as e:
+=======
+                extra_name = self._name.split("_", 1)[1]
+                LOG.debug('Setting extra %s=%r' % (extra_name, newval))
+                self._memory.extra[extra_name].value = newval
+            except settings.InternalError, e:
+>>>>>>> 83a70ea2a2201da09d096ea33e58a7beae48350a
                 self._errfn(self._name, str(e))
                 return str(e)
         else:
@@ -109,6 +116,22 @@ class StringEditor(ValueEditor):
 
     def changed(self, _widget):
         self.update()
+
+
+class IntegerEditor(ValueEditor):
+    def _init(self, data):
+        self._widget = gtk.SpinButton()
+        adj = self._widget.get_adjustment()
+        adj.configure(data.get_value(),
+                      data.get_min(), data.get_max(),
+                      data.get_step(), 1, 0)
+        self._widget.connect('value-changed', self.changed)
+
+    def changed(self, _widget):
+        self.update()
+
+    def _get_value(self):
+        return int(self._widget.get_value())
 
 
 class ChoiceEditor(ValueEditor):
@@ -183,7 +206,7 @@ class MemoryDetailEditor(gtk.Dialog):
 
     def _add(self, tab, row, name, editor, text, colindex=0):
         label = gtk.Label(text + ":")
-        label.set_alignment(0.0, 0.5)
+        label.set_alignment(1.0, 0.5)
         label.show()
         tab.attach(label, colindex, colindex + 1, row, row + 1,
                    xoptions=gtk.FILL, yoptions=0, xpadding=6, ypadding=3)
@@ -288,6 +311,12 @@ class MemoryDetailEditor(gtk.Dialog):
                     self._add(table, row, name, editor,
                               setting.get_shortname())
                     self._set_doc(name, setting.__doc__)
+                elif isinstance(setting.value,
+                                settings.RadioSettingValueInteger):
+                    editor = IntegerEditor(self._features, self._memory,
+                                           _err, name, setting.value)
+                    self._add(table, row, name, editor,
+                              setting.get_shortname())
                 row += 1
                 self._order.append(name)
 
@@ -295,12 +324,16 @@ class MemoryDetailEditor(gtk.Dialog):
 
     def __init__(self, features, memory, parent=None):
         self._memory = memory
+        buttons = (gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL,
+                   gtk.STOCK_OK, gtk.RESPONSE_OK)
         gtk.Dialog.__init__(self,
                             title="Memory Properties",
                             flags=gtk.DIALOG_MODAL,
                             parent=parent,
-                            buttons=(gtk.STOCK_OK, gtk.RESPONSE_OK,
-                                     gtk.STOCK_CANCEL, gtk.RESPONSE_CANCEL))
+                            buttons=buttons)
+        self.set_default_response(gtk.RESPONSE_OK)
+        self.set_alternative_button_order([gtk.RESPONSE_OK,
+                                           gtk.RESPONSE_CANCEL])
         self.set_size_request(-1, 500)
         self._tips = compat.CompatTooltips()
 

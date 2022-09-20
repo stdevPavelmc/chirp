@@ -6,6 +6,7 @@ from tests.unit import base
 
 __builtins__["_"] = lambda s: s
 
+<<<<<<< HEAD
 memedit = None
 
 
@@ -21,6 +22,15 @@ class TestEdits(base.BaseTest):
         super(TestEdits, self).tearDown()
         base.unmock_gtk()
 
+=======
+try:
+    from chirp.ui import memedit
+except ImportError:
+    memedit = None
+
+
+class TestEdits(base.BaseGTKTest):
+>>>>>>> 83a70ea2a2201da09d096ea33e58a7beae48350a
     def _test_tone_column_change(self, col,
                                  ini_tmode='', ini_cmode='',
                                  exp_tmode=None, exp_cmode=None):

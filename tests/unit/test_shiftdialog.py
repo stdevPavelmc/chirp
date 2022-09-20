@@ -5,6 +5,13 @@ except ImportError:
     from mox3 import mox
 
 from tests.unit import base
+<<<<<<< HEAD
+=======
+try:
+    from chirp.ui import shiftdialog
+except ImportError:
+    shiftdialog = None
+>>>>>>> 83a70ea2a2201da09d096ea33e58a7beae48350a
 from chirp import chirp_common
 from chirp import errors
 
@@ -50,6 +57,7 @@ class FakeRadioThread(object):
         pass
 
 
+<<<<<<< HEAD
 class ShiftDialogTest(base.BaseTest):
     def setUp(self):
         global shiftdialog
@@ -62,6 +70,9 @@ class ShiftDialogTest(base.BaseTest):
         super(ShiftDialogTest, self).tearDown()
         base.unmock_gtk()
 
+=======
+class ShiftDialogTest(base.BaseGTKTest):
+>>>>>>> 83a70ea2a2201da09d096ea33e58a7beae48350a
     def _test_hole(self, fn, starting, arg, expected):
         radio = FakeRadio(*tuple(starting))
         radio.get_features().memory_bounds = (0, 5)
