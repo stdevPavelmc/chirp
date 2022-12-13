@@ -56,12 +56,13 @@ struct {
        tone_mode:4;
   u8   unknown1:3,
        mode_narrow:1,
-       unknown2:4;
+       power:2,
+       unknown2:2;
   u8   dtcs_polarity:2,
        duplex:2,
        unknown3:1,
        reverse_duplex:1,
-       unknown4:1,
+       tx_inhibit:1,
        display_style:1;
 } memory[200];
 #seekto 0x1340; // channel memory flags
@@ -106,9 +107,9 @@ DTCSP = ["NN", "NR", "RN", "RR"]
 DTCS_POLARITY = ["NN", "NR", "RN", "RR"]
 
 POWER_LEVELS = [chirp_common.PowerLevel("High", watts=65),
-                chirp_common.PowerLevel("Mid", watts=25),
+                chirp_common.PowerLevel("Low", watts=5),
                 chirp_common.PowerLevel("MidLow", watts=10),
-                chirp_common.PowerLevel("Low", watts=5)]
+                chirp_common.PowerLevel("Mid", watts=25)]
 
 
 def _wipe_memory(mem, char):
@@ -178,6 +179,7 @@ class IC2300Radio(icf.IcomCloneModeRadio):
         mem.dtcs_polarity = DTCS_POLARITY[_mem.dtcs_polarity]
         mem.duplex = DUPLEX[_mem.duplex]
         mem.skip = "S" if _flag.skip else ""
+        mem.power = POWER_LEVELS[_mem.power]
 
         # Reverse duplex
         mem.extra = RadioSettingGroup("extra", "Extra")
@@ -185,6 +187,12 @@ class IC2300Radio(icf.IcomCloneModeRadio):
                            RadioSettingValueBoolean(bool(_mem.reverse_duplex)))
         rev.set_doc("Reverse duplex")
         mem.extra.append(rev)
+
+        # Tx inhibit
+        tx_inhibit = RadioSetting("tx_inhibit", "TX inhibit",
+                           RadioSettingValueBoolean(bool(_mem.tx_inhibit)))
+        tx_inhibit.set_doc("TX inhibit")
+        mem.extra.append(tx_inhibit)
 
         # Memory display style
         opt = ["Frequency", "Label"]
@@ -221,6 +229,10 @@ class IC2300Radio(icf.IcomCloneModeRadio):
         _mem.mode_narrow = mem.mode.startswith("N")
         _mem.dtcs_polarity = DTCSP.index(mem.dtcs_polarity)
         _mem.duplex = DUPLEX.index(mem.duplex)
+        if mem.power:
+            _mem.power = POWER_LEVELS.index(mem.power)
+        else:
+            _mem.power = POWER_LEVELS[0]
         _flag.skip = mem.skip != ""
 
         for setting in mem.extra:

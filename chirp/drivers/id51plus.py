@@ -31,13 +31,14 @@ struct {
       mode:3;
   u8 dtcs;
   u8 tune_step:4,
-     unknown5:4;
+     dsql_mode:2,
+     unknown5:2;
   u8 unknown4;
   u8 tmode:4,
      duplex:2,
      dtcs_polarity:2;
   char name[16];
-  u8 unknown13;
+  u8 digcode;
   u8 urcall[7];
   u8 rpt1call[7];
   u8 rpt2call[7];
@@ -160,7 +161,7 @@ class ID51PLUSRadio(id31.ID31Radio):
 
     def get_repeater_call_list(self):
         calls = []
-        # Unlike previos DStar radios, there is not a seperate repeater
+        # Unlike previous DStar radios, there is not a separate repeater
         # callsign list. It's only the DV Memory banks.
         for repeater in self._memobj.repeaters:
             call = id31._decode_call(repeater.call)
@@ -171,3 +172,23 @@ class ID51PLUSRadio(id31.ID31Radio):
 
     def process_mmap(self):
         self._memobj = bitwise.parse(MEM_FORMAT, self._mmap)
+
+
+@directory.register
+class ID51PLUS2Radio(ID51PLUSRadio):
+    MODEL = 'ID-51 Plus2'
+    _model = b'\x33\x90\x00\x03'
+    _endframe = b'Icom Inc.DA'
+
+    _raw_frames = True
+    _highbit_flip = True
+
+    _icf_data = {
+        'MapRev': 1,
+        'EtcData': 0x400001,
+    }
+
+    @classmethod
+    def match_model(cls, filedata, filename):
+        # This model is always matched with metadata
+        return False

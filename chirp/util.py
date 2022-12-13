@@ -15,6 +15,27 @@
 
 import six
 import struct
+import sys
+
+
+def byte_to_int(b):
+    """This does what is needed to convert a bytes()[i] to an int"""
+
+    if sys.version_info.major == 3 and isinstance(b, int):
+        return b
+    else:
+        return ord(b)
+
+
+def int_to_byte(i):
+    """This does what is needed to convert an int to a bytes"""
+
+    if sys.version_info.major == 3 and isinstance(i, int):
+        return bytes([i])
+    elif isinstance(i, int):
+        return chr(i)
+    else:
+        return i
 
 
 def hexprint(data, addrfmt=None):
@@ -23,6 +44,7 @@ def hexprint(data, addrfmt=None):
         addrfmt = '%(addr)03i'
 
     block_size = 8
+<<<<<<< HEAD
 
     lines = len(data) // block_size
 
@@ -43,6 +65,15 @@ def hexprint(data, addrfmt=None):
         byte_to_int = ord
 
     for block in range(0, (len(data) // block_size)):
+=======
+    out = ""
+
+    blocks = len(data) // block_size
+    if len(data) % block_size:
+        blocks += 1
+
+    for block in range(0, blocks):
+>>>>>>> cc5f7371c7fa3ee4868b75b3b8f353a675aa6868
         addr = block * block_size
         try:
             out += addrfmt % locals()
@@ -50,6 +81,7 @@ def hexprint(data, addrfmt=None):
             out += "%03i" % addr
         out += ': '
 
+<<<<<<< HEAD
         left = len(data) - (block * block_size)
         if left < block_size:
             limit = left
@@ -70,6 +102,24 @@ def hexprint(data, addrfmt=None):
                 byte = ord(byte)
             if byte > 0x20 and byte < 0x7E:
                 out += "%s" % chr(byte)
+=======
+        for j in range(0, block_size):
+            try:
+                out += "%02x " % byte_to_int(data[(block * block_size) + j])
+            except IndexError:
+                out += "   "
+
+        out += "  "
+
+        for j in range(0, block_size):
+            try:
+                char = byte_to_int(data[(block * block_size) + j])
+            except IndexError:
+                char = ord('.')
+
+            if char > 0x20 and char < 0x7E:
+                out += "%s" % chr(char)
+>>>>>>> cc5f7371c7fa3ee4868b75b3b8f353a675aa6868
             else:
                 out += "."
 

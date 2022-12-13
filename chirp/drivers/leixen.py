@@ -421,6 +421,7 @@ class LeixenVV898Radio(chirp_common.CloneModeRadio):
         rf.valid_tuning_steps = _STEP_LIST
         rf.valid_bands = [(136000000, 174000000),
                           (400000000, 470000000)]
+        rf.valid_dtcs_codes = DTCS_CODES
         rf.memory_bounds = (1, 199)
         return rf
 
@@ -960,6 +961,7 @@ class JetstreamJT270MRadio(LeixenVV898Radio):
     """Jetstream JT270M"""
     VENDOR = "Jetstream"
     MODEL = "JT270M"
+    ALIASES = []
 
     _file_ident = "JET"
     _model_ident = 'LX-\x89\x85\x53'
@@ -971,6 +973,7 @@ class JetstreamJT270MHRadio(LeixenVV898Radio):
     """Jetstream JT270MH"""
     VENDOR = "Jetstream"
     MODEL = "JT270MH"
+    ALIASES = []
 
     _file_ident = "Leixen"
     _model_ident = 'LX-\x89\x85\x85'

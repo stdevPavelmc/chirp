@@ -453,6 +453,7 @@ class TestCaseBruteForce(TestCase):
                 continue
             if mode == "DV":
                 tmp = chirp_common.DVMemory()
+<<<<<<< HEAD
                 try:
                     ensure_urcall(tmp.dv_urcall)
                     ensure_rptcall(tmp.dv_rpt1call)
@@ -464,6 +465,12 @@ class TestCaseBruteForce(TestCase):
                         # This radio may not do call lists at all,
                         # so let it slide
                         pass
+=======
+                if rf.requires_call_lists:
+                    ensure_urcall(tmp.dv_urcall)
+                    ensure_rptcall(tmp.dv_rpt1call)
+                    ensure_rptcall(tmp.dv_rpt2call)
+>>>>>>> cc5f7371c7fa3ee4868b75b3b8f353a675aa6868
             if mode == "FM" and freq_is_ok(tmp.freq + 100000000):
                 # Some radios don't support FM below approximately 30MHz,
                 # so jump up by 100MHz, if they support that
@@ -895,8 +902,9 @@ class TestCaseDetect(TestCase):
         elif issubclass(radio.__class__, self._wrapper._dstclass):
             pass
         elif radio.__class__ != self._wrapper._dstclass:
-            raise TestFailedError("%s detected as %s" %
-                                  (self._wrapper._dstclass, radio.__class__))
+            raise TestFailedError("%s detected as %s for %s" %
+                                  (self._wrapper._dstclass, radio.__class__,
+                                   filename))
         return []
 
 TESTS["Detect"] = TestCaseDetect

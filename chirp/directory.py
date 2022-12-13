@@ -14,7 +14,11 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+<<<<<<< HEAD
 import glob
+=======
+import binascii
+>>>>>>> cc5f7371c7fa3ee4868b75b3b8f353a675aa6868
 import os
 import tempfile
 import logging
@@ -73,6 +77,11 @@ DRV_TO_RADIO = {}
 RADIO_TO_DRV = {}
 
 
+def register_format(name, pattern, readonly=False):
+    """This is just here for compatibility with the py3 branch."""
+    pass
+
+
 def get_radio(driver):
     """Get radio driver class by identification string"""
     if driver in DRV_TO_RADIO:
@@ -91,35 +100,38 @@ def get_driver(rclass):
         raise Exception("Unknown radio type `%s'" % rclass)
 
 
-def icf_to_image(icf_file, img_file):
-    # FIXME: Why is this here?
-    """Convert an ICF file to a .img file"""
-    mdata, mmap = icf.read_file(icf_file)
-    img_data = None
+def icf_to_radio(icf_file):
+    """Detect radio class from ICF file."""
+    icfdata, mmap = icf.read_file(icf_file)
 
     for model in list(DRV_TO_RADIO.values()):
         try:
-            if model._model == mdata:
-                img_data = mmap.get_packed()[:model._memsize]
-                break
+            if model._model == icfdata['model']:
+                return model
         except Exception:
             pass  # Skip non-Icoms
 
-    if img_data:
-        f = file(img_file, "wb")
-        f.write(img_data)
-        f.close()
-    else:
-        LOG.error("Unsupported model data: %s" % util.hexprint(mdata))
-        raise Exception("Unsupported model")
+    LOG.error("Unsupported model data: %s" % util.hexprint(icfdata['model']))
+    raise Exception("Unsupported model %s" % binascii.hexlify(
+        icfdata['model']))
+
+
+# This is a mapping table of radio models that have changed in the past.
+# ideally we would never do this, but in the case where a radio was added
+# as the wrong model name, or a model has to be split, we need to be able
+# to open older files and do something intelligent with them.
+MODEL_COMPAT = {
+    ('Retevis', 'RT-5R'): ('Retevis', 'RT5R'),
+    ('Retevis', 'RT-5RV'): ('Retevis', 'RT5RV'),
+}
 
 
 def get_radio_by_image(image_file):
     """Attempt to get the radio class that owns @image_file"""
     if image_file.startswith("radioreference://"):
-        _, _, zipcode, username, password = image_file.split("/", 4)
+        _, _, zipcode, username, password, country = image_file.split("/", 5)
         rr = radioreference.RadioReferenceRadio(None)
-        rr.set_params(zipcode, username, password)
+        rr.set_params(zipcode, username, password, country)
         return rr
 
     # FIXME: Disable rfinder until the module is fixed
@@ -130,10 +142,8 @@ def get_radio_by_image(image_file):
         return rf
 
     if os.path.exists(image_file) and icf.is_icf_file(image_file):
-        tempf = tempfile.mktemp()
-        icf_to_image(image_file, tempf)
-        LOG.info("Auto-converted %s -> %s" % (image_file, tempf))
-        image_file = tempf
+        rclass = icf_to_radio(image_file)
+        return rclass(image_file)
 
     if os.path.exists(image_file):
         with open(image_file, "rb") as f:
@@ -178,14 +188,19 @@ def get_radio_by_image(image_file):
                 LOG.error('Radio class %s failed during detection: %s' % (
                     rclass.__name__, error))
 
+        meta_vendor = metadata.get('vendor')
+        meta_model = metadata.get('model')
+
+        meta_vendor, meta_model = MODEL_COMPAT.get((meta_vendor, meta_model),
+                                                   (meta_vendor, meta_model))
+
         # If metadata, then it has to match one of the aliases or the parent
         for alias in rclass.ALIASES + [rclass]:
-            if (alias.VENDOR == metadata.get('vendor') and
-                    alias.MODEL == metadata.get('model')):
+            if (alias.VENDOR == meta_vendor and alias.MODEL == meta_model):
 
                 class DynamicRadioAlias(rclass):
-                    VENDOR = metadata.get('vendor')
-                    MODEL = metadata.get('model')
+                    VENDOR = meta_vendor
+                    MODEL = meta_model
                     VARIANT = metadata.get('variant')
 
                 return DynamicRadioAlias(image_file)

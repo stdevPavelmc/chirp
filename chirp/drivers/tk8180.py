@@ -36,8 +36,8 @@ try:
     has_future = True
 except ImportError:
     has_future = False
-    LOG.warning('python-future package is not '
-                'available; %s requires it' % __name__)
+    LOG.debug('python-future package is not '
+              'available; %s requires it' % __name__)
 
 
 HEADER_FORMAT = """
@@ -49,7 +49,8 @@ struct {
   char sw_key[12];
   u8 unknown2[4];
   char model[5];
-  u8 unknown3[11];
+  u8 variant;
+  u8 unknown3[10];
 } header;
 
 #seekto 0x0140;
@@ -188,6 +189,9 @@ SUBLCD = ['Zone Number', 'CH/GID Number', 'OSD List Number']
 CLOCKFMT = ['12H', '24H']
 DATEFMT = ['Day/Month', 'Month/Day']
 MICSENSE = ['On']
+ONLY_MOBILE_SETTINGS = ['power_switch_memory', 'off_hook_decode',
+                        'ignition_sense', 'mvp', 'it', 'ignition_mode']
+
 
 POWER_LEVELS = [chirp_common.PowerLevel("Low", watts=5),
                 chirp_common.PowerLevel("High", watts=50)]
@@ -239,8 +243,13 @@ def do_ident(radio):
     ack = radio.pipe.read(1)
     if ack != b'\x06':
         raise errors.RadioError('Radio refused program mode')
-    if ident[:5] not in (b'M8180',):
-        raise errors.RadioError('Unsupported radio model %s' % ident[:5])
+    if ident[:6] not in (radio._model,):
+        model = ident[:5].decode()
+        variants = {b'\x06': 'K, K1, K3 (450-520MHz)',
+                    b'\x07': 'K2, K4 (400-470MHz)'}
+        if model == 'P3180':
+            model += ' ' + variants.get(ident[5], '(Unknown)')
+        raise errors.RadioError('Unsupported radio model %s' % model)
 
 
 def checksum_data(data):
@@ -418,6 +427,10 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
             LOG.exception('General failure')
             raise errors.RadioError('Failed to upload to radio: %s' % e)
 
+    @property
+    def is_portable(self):
+        return self._model.startswith(b'P')
+
     def probe_layout(self):
         start_addrs = []
         tmp_format = '#seekto 0x0A00; ul16 zone_starts[128];'
@@ -465,7 +478,6 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
                     'count': max(count, 2),   # bitwise bug, one-element array
                     'index': index})
 
-        print(mem_format)
         self._memobj = bitwise.parse(mem_format, self._mmap)
 
     def expand_mmap(self, zone_sizes):
@@ -529,6 +541,13 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
                 dest_zone.zoneinfo.name = (
                     'Zone %i' % (zone_number + 1)).ljust(12)
 
+                # Copy the settings we care about from the first zone
+                z0info = self._memobj.zone0.zoneinfo
+                dest_zone.zoneinfo.timeout = z0info.timeout
+                dest_zone.zoneinfo.tot_alert = z0info.tot_alert
+                dest_zone.zoneinfo.tot_rekey = z0info.tot_rekey
+                dest_zone.zoneinfo.tot_reset = z0info.tot_reset
+
     def shuffle_zone(self):
         """Sort the memories in the zone according to logical channel number"""
         # FIXME: Move this to the zone
@@ -566,9 +585,12 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
         rf.has_settings = True
         rf.has_bank = False
         rf.has_sub_devices = True
+        rf.has_rx_dtcs = True
         rf.can_odd_split = True
-        rf.valid_tmodes = ['', 'Tone', 'TSQL', 'DTCS']
-        rf.valid_bands = [(400000000, 520000000)]
+        rf.valid_tmodes = ['', 'Tone', 'TSQL', 'DTCS', 'Cross']
+        rf.valid_cross_modes = ['Tone->Tone', 'DTCS->', '->DTCS', 'Tone->DTCS',
+                                'DTCS->Tone', '->Tone', 'DTCS->DTCS']
+        rf.valid_bands = self.VALID_BANDS
         rf.valid_modes = ['FM', 'NFM']
         rf.valid_tuning_steps = [2.5, 5.0, 6.25, 12.5, 10.0, 15.0, 20.0,
                                  25.0, 50.0, 100.0]
@@ -635,7 +657,7 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
             return int(val * 10)
         elif mode == 'DTCS':
             code = int('%i' % val, 8)
-            code |= 0x2000
+            code |= 0x2800
             if pol == 'R':
                 code |= 0x8000
             return code
@@ -754,11 +776,13 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
 
     def _pure_choice_setting(self, settings_key, name, choices, default='Off'):
         if default is not None:
-            choices = [default] + choices
+            ui_choices = [default] + choices
+        else:
+            ui_choices = choices
         s = RadioSetting(
             settings_key, name,
             RadioSettingValueList(
-                choices,
+                ui_choices,
                 get_choice(self._memobj.settings, settings_key,
                            choices, default)))
         s.set_apply_callback(set_choice, self._memobj.settings,
@@ -785,7 +809,8 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
 
         common1.append(self._pure_choice_setting('sublcd',
                                                  'Sub LCD Display',
-                                                 SUBLCD))
+                                                 SUBLCD,
+                                                 default='None'))
 
         def apply_clockfmt(setting):
             settings.clockfmt = CLOCKFMT.index(str(setting.value))
@@ -832,13 +857,17 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
                           ('ssi', 'Signal Strength Indicator'),
                           ('ignition_sense', 'Ingnition Sense')]
         for key, name in inverted_flags:
+            if self.is_portable and key in ONLY_MOBILE_SETTINGS:
+                # Skip settings that are not valid for portables
+                continue
             common1.append(self._inverted_flag_setting(key, name))
 
-        common1.append(self._pure_choice_setting('ignition_mode',
-                                                 'Ignition Mode',
-                                                 ['Ignition & SW',
-                                                  'Ignition Only'],
-                                                 None))
+        if not self.is_portable and 'ignition_mode' in ONLY_MOBILE_SETTINGS:
+            common1.append(self._pure_choice_setting('ignition_mode',
+                                                     'Ignition Mode',
+                                                     ['Ignition & SW',
+                                                      'Ignition Only'],
+                                                     None))
 
         def apply_it(setting):
             settings.ignition_time = int(setting.value) / 600
@@ -848,7 +877,8 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
             'it', 'Ignition Timer (s)',
             RadioSettingValueInteger(10, 28800, _it))
         it.set_apply_callback(apply_it)
-        common1.append(it)
+        if not self.is_portable and 'it' in ONLY_MOBILE_SETTINGS:
+            common1.append(it)
 
         return common1
 
@@ -895,13 +925,17 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
 
         levels = {'lo_volume': 'Low Volume Level (Fixed Volume)',
                   'hi_volume': 'High Volume Level (Fixed Volume)',
-                  'min_volume': 'Minimum Volume',
-                  'max_volume': 'Maximum Volume'}
+                  'min_volume': 'Minimum Audio Volume',
+                  'max_volume': 'Maximum Audio Volume'}
         for value, name in levels.items():
             setting = getattr(settings, value)
+            if 'Audio' in name:
+                minimum = 0
+            else:
+                minimum = 1
             volume = RadioSetting(
                 'settings.%s' % value, name,
-                RadioSettingValueInteger(1, 31, int(setting)))
+                RadioSettingValueInteger(minimum, 31, int(setting)))
             volume.set_apply_callback(apply_vol_level, value)
             common2.append(volume)
 
@@ -927,11 +961,12 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
 
         _volpreset = int(settings.min_vol_preset)
         volpreset = RadioSetting(
-            'mvp', 'Minimum Volume Preset',
+            'mvp', 'Minimum Volume Type',
             RadioSettingValueList(MIN_VOL_PRESET.keys(),
                                   MIN_VOL_PRESET_REV[_volpreset]))
         volpreset.set_apply_callback(apply_mvp)
-        common2.append(volpreset)
+        if not self.is_portable and 'mvp' in ONLY_MOBILE_SETTINGS:
+            common2.append(volpreset)
 
         return common2
 
@@ -982,10 +1017,11 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
                                 RadioSettingValueString(0, 12, _name))
             zone.append(name)
 
-            def apply_timer(setting, key):
+            def apply_timer(setting, key, zone_number):
                 val = int(setting.value)
                 if val == 0:
                     val = 0xFFFF
+                _zone = getattr(self._memobj, 'zone%i' % zone_number).zoneinfo
                 setattr(_zone, key, val)
 
             def collapse(val):
@@ -997,25 +1033,25 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
             timer = RadioSetting(
                 'timeout', 'Time-out Timer',
                 RadioSettingValueInteger(15, 1200, collapse(_zone.timeout)))
-            timer.set_apply_callback(apply_timer, 'timeout')
+            timer.set_apply_callback(apply_timer, 'timeout', i)
             zone.append(timer)
 
             timer = RadioSetting(
                 'tot_alert', 'TOT Pre-Alert',
                 RadioSettingValueInteger(0, 10, collapse(_zone.tot_alert)))
-            timer.set_apply_callback(apply_timer, 'tot_alert')
+            timer.set_apply_callback(apply_timer, 'tot_alert', i)
             zone.append(timer)
 
             timer = RadioSetting(
                 'tot_rekey', 'TOT Re-Key Time',
                 RadioSettingValueInteger(0, 60, collapse(_zone.tot_rekey)))
-            timer.set_apply_callback(apply_timer, 'tot_rekey')
+            timer.set_apply_callback(apply_timer, 'tot_rekey', i)
             zone.append(timer)
 
             timer = RadioSetting(
                 'tot_reset', 'TOT Reset Time',
                 RadioSettingValueInteger(0, 15, collapse(_zone.tot_reset)))
-            timer.set_apply_callback(apply_timer, 'tot_reset')
+            timer.set_apply_callback(apply_timer, 'tot_reset', i)
             zone.append(timer)
 
             zone.append(self._inverted_flag_setting(
@@ -1113,8 +1149,10 @@ class KenwoodTKx180Radio(chirp_common.CloneModeRadio):
             class _Zone(KenwoodTKx180RadioZone):
                 VENDOR = self.VENDOR
                 MODEL = self.MODEL
+                VALID_BANDS = self.VALID_BANDS
                 VARIANT = 'Zone %s' % (
                     str(zone.zoneinfo.name).rstrip('\x00').rstrip())
+                _model = self._model
 
             zones.append(_Zone(self, i))
         return zones
@@ -1153,5 +1191,45 @@ class KenwoodTKx180RadioZone(KenwoodTKx180Radio):
 
 if has_future:
     @directory.register
+    class KenwoodTK7180Radio(KenwoodTKx180Radio):
+        MODEL = 'TK-7180'
+        VALID_BANDS = [(136000000, 174000000)]
+        _model = b'M7180\x04'
+
+    @directory.register
     class KenwoodTK8180Radio(KenwoodTKx180Radio):
         MODEL = 'TK-8180'
+        VALID_BANDS = [(400000000, 520000000)]
+        _model = b'M8180\x06'
+
+    @directory.register
+    class KenwoodTK2180Radio(KenwoodTKx180Radio):
+        MODEL = 'TK-2180'
+        VALID_BANDS = [(136000000, 174000000)]
+        _model = b'P2180\x04'
+
+    # K1,K3 are technically 450-470 (K3 == keypad)
+    @directory.register
+    class KenwoodTK3180K1Radio(KenwoodTKx180Radio):
+        MODEL = 'TK-3180K'
+        VALID_BANDS = [(400000000, 520000000)]
+        _model = b'P3180\x06'
+
+    # K2,K4 are technically 400-470 (K4 == keypad)
+    @directory.register
+    class KenwoodTK3180K2Radio(KenwoodTKx180Radio):
+        MODEL = 'TK-3180K2'
+        VALID_BANDS = [(400000000, 520000000)]
+        _model = b'P3180\x07'
+
+    @directory.register
+    class KenwoodTK8180E(KenwoodTKx180Radio):
+        MODEL = 'TK-8180E'
+        VALID_BANDS = [(400000000, 520000000)]
+        _model = b'M8189\''
+
+    @directory.register
+    class KenwoodTK7180ERadio(KenwoodTKx180Radio):
+        MODEL = 'TK-7180E'
+        VALID_BANDS = [(136000000, 174000000)]
+        _model = b'M7189$'

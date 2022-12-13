@@ -15,6 +15,8 @@
 
 from chirp import chirp_common
 
+BANNED_NAME_CHARACTERS = r'%'
+
 
 class InvalidValueError(Exception):
 
@@ -25,6 +27,11 @@ class InvalidValueError(Exception):
 class InternalError(Exception):
 
     """A driver provided an invalid settings object structure"""
+    pass
+
+
+class InvalidNameError(Exception):
+    """A driver provided a setting with an invalid name"""
     pass
 
 
@@ -169,15 +176,19 @@ class RadioSettingValueList(RadioSettingValue):
 
     """A list-of-strings setting"""
 
-    def __init__(self, options, current):
+    def __init__(self, options, current=None, current_index=0):
         RadioSettingValue.__init__(self)
-        self._options = options
-        self.set_value(current)
+        self._options = list(options)
+        self.set_value(current or self._options[int(current_index)])
 
     def set_value(self, value):
         if value not in self._options:
             raise InvalidValueError("%s is not valid for this setting" % value)
         RadioSettingValue.set_value(self, value)
+
+    def set_index(self, index):
+        # Will raise IndexError as expected
+        self.set_value(self._options[int(index)])
 
     def get_options(self):
         """Returns the list of valid option values"""
@@ -312,6 +323,10 @@ class RadioSettingGroup(object):
             raise InternalError("Incorrect type %s" % type(element))
 
     def __init__(self, name, shortname, *elements):
+        for c in BANNED_NAME_CHARACTERS:
+            if c in name:
+                raise InvalidNameError(
+                    'Name must not contain %r character' % c)
         self._name = name            # Setting identifier
         self._shortname = shortname  # Short human-readable name/description
         self.__doc__ = name          # Longer explanation/documentation
@@ -435,7 +450,7 @@ class RadioSetting(RadioSettingGroup):
         return "%s:%s" % (self._name, self.value)
 
     def __repr__(self):
-        return "[RadioSetting %s:%s]" % (self._name, self._value)
+        return "[RadioSetting %s:%s]" % (self._name, self.value)
 
     # Magic foo.value attribute
     def __getattr__(self, name):

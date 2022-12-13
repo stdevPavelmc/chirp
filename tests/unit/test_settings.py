@@ -54,6 +54,28 @@ class TestSettingValues(base.BaseTest):
         self._set_and_catch(value, "Jkl", "Xyz")
         self.assertEqual(value.get_options(), opts)
 
+    def test_radio_setting_value_list_by_index(self):
+        opts = ["Abc", "Def", "Ghi"]
+        value = settings.RadioSettingValueList(opts, current_index=1)
+        self.assertEqual(value.get_value(), "Def")
+        self.assertEqual(int(value), 1)
+        self._set_and_test(value, "Def", "Ghi", "Abc")
+        self._set_and_catch(value, "Jkl", "Xyz")
+        self.assertEqual(value.get_options(), opts)
+
+        # Make sure we int() the index, as we may pass a bitwise object
+        value = settings.RadioSettingValueList(opts, current_index='1')
+        self.assertEqual(value.get_value(), "Def")
+
+        value.set_index(0)
+        self.assertEqual(value.get_value(), 'Abc')
+
+        # Same here, int() the index
+        value.set_index('0')
+        self.assertEqual(value.get_value(), 'Abc')
+
+        self.assertRaises(IndexError, value.set_index, 7)
+
     def test_radio_setting_value_string(self):
         value = settings.RadioSettingValueString(1, 5, "foo", autopad=False)
         self.assertEqual(value.get_value(), "foo")
@@ -111,6 +133,8 @@ class TestSettingContainers(base.BaseTest):
         self.assertEqual(rs.value, val)
         rs.value = False
         self.assertEqual(val.get_value(), False)
+        self.assertEqual('foo:False', str(rs))
+        self.assertEqual('[RadioSetting foo:False]', repr(rs))
 
     def test_radio_setting_multi(self):
         val1 = settings.RadioSettingValueBoolean(True)
@@ -138,3 +162,12 @@ class TestSettingContainers(base.BaseTest):
         rs.set_apply_callback(test_cb, "foo", "bar")
         self.assertTrue(rs.has_apply_callback())
         self.assertRaises(TestException, rs.run_apply_callback)
+
+    def test_setting_banned_name(self):
+        self.assertRaises(settings.InvalidNameError,
+                          settings.RadioSetting, "foo%bar", "Foo")
+
+    def test_setting_banned_name_characters(self):
+        for c in settings.BANNED_NAME_CHARACTERS:
+            self.assertRaises(settings.InvalidNameError,
+                              settings.RadioSetting, "foo%sbar" % c, "Foo")

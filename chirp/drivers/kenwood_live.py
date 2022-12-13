@@ -65,13 +65,11 @@ LAST_DELIMITER = ("\r", " ")
 # fields, but others do.
 
 
-def command(ser, cmd, *args):
+def _command(ser, cmd, *args):
     """Send @cmd to radio via @ser"""
     global LOCK, LAST_DELIMITER, COMMAND_RESP_BUFSIZE
 
     start = time.time()
-
-    LOCK.acquire()
 
     # TODO: This global use of LAST_DELIMITER breaks reentrancy
     # and needs to be fixed.
@@ -95,9 +93,12 @@ def command(ser, cmd, *args):
     else:
         LOG.error("Giving up")
 
-    LOCK.release()
-
     return result.strip()
+
+
+def command(ser, cmd, *args):
+    with LOCK:
+        return _command(ser, cmd, *args)
 
 
 def get_id(ser):
@@ -173,6 +174,7 @@ class KenwoodLiveRadio(chirp_common.LiveRadio):
     _upper = 200
     _kenwood_split = False
     _kenwood_valid_tones = list(chirp_common.TONES)
+    _has_name = True
 
     def __init__(self, *args, **kwargs):
         chirp_common.LiveRadio.__init__(self, *args, **kwargs)
@@ -235,13 +237,14 @@ class KenwoodLiveRadio(chirp_common.LiveRadio):
         mem = self._parse_mem_spec(spec)
         self._memcache[mem.number] = mem
 
-        result = command(self.pipe, *self._cmd_get_memory_name(number))
-        if " " in result:
-            value = result.split(" ", 1)[1]
-            if value.count(",") == 2:
-                _zero, _loc, mem.name = value.split(",")
-            else:
-                _loc, mem.name = value.split(",")
+        if self._has_name:
+            result = command(self.pipe, *self._cmd_get_memory_name(number))
+            if " " in result:
+                value = result.split(" ", 1)[1]
+                if value.count(",") == 2:
+                    _zero, _loc, mem.name = value.split(",")
+                else:
+                    _loc, mem.name = value.split(",")
 
         if mem.duplex == "" and self._kenwood_split:
             result = command(self.pipe, *self._cmd_get_split(number))
@@ -272,7 +275,7 @@ class KenwoodLiveRadio(chirp_common.LiveRadio):
         spec = self._make_mem_spec(memory)
         spec = ",".join(spec)
         r1 = command(self.pipe, *self._cmd_set_memory(memory.number, spec))
-        if not iserr(r1):
+        if not iserr(r1) and self._has_name:
             time.sleep(0.5)
             r2 = command(self.pipe, *self._cmd_set_memory_name(memory.number,
                                                                memory.name))
@@ -283,7 +286,7 @@ class KenwoodLiveRadio(chirp_common.LiveRadio):
                 raise errors.InvalidDataError("Radio refused name %i: %s" %
                                               (memory.number,
                                                repr(memory.name)))
-        else:
+        elif self._has_name:
             raise errors.InvalidDataError("Radio refused %i" % memory.number)
 
         if memory.duplex == "split" and self._kenwood_split:
@@ -1216,6 +1219,96 @@ class THD72Radio(TMD710Radio):
 
 
 @directory.register
+class THD74Radio(TMD710Radio):
+    """Kenwood TH_D74"""
+    MODEL = "TH-D74 (live mode)"
+    HARDWARE_FLOW = sys.platform == "darwin"
+
+    STEPS = [5.0, 6.25, 8.33, 9.0, 10.0, 12.5, 15.0, 20.0,
+             25.0, 30.0, 50.0, 100.0]
+    MODES = ['FM', 'DV', 'AM', 'LSB', 'USB', 'CW', 'NFM', 'DR',
+             'WFM', 'R-CW']
+    CROSS_MODES = ['DTCS->', 'Tone->DTCS', 'DTCS->Tone', 'Tone->Tone']
+    DUPLEX = ['', '+', '-', 'split']
+    _has_name = False
+
+    @classmethod
+    def get_prompts(cls):
+        rp = chirp_common.RadioPrompts()
+        rp.experimental = ("This driver is incomplete as the D74 lacks "
+                           "the full serial command set of older radios. "
+                           "As such, this should be considered permanently "
+                           "experimental.")
+        return rp
+
+    def _cmd_get_memory_name(self, number):
+        return ''
+
+    def get_features(self):
+        rf = super(THD74Radio, self).get_features()
+        rf.valid_tuning_steps = self.STEPS
+        rf.valid_modes = self.MODES
+        rf.valid_cross_modes = self.CROSS_MODES
+        rf.valid_tmodes = ['', 'Tone', 'TSQL', 'DTCS', 'Cross']
+        rf.has_name = False  # Radio has it, but no command to retrieve
+        rf.has_cross = True
+        return rf
+
+    def _parse_mem_spec(self, spec):
+        mem = chirp_common.Memory()
+        mem.number = int(spec[0])
+        mem.freq = int(spec[1])
+        mem.offset = int(spec[2])
+        mem.tuning_step = self.STEPS[int(spec[3])]
+        mem.mode = self.MODES[int(spec[5])]
+        if int(spec[11]):
+            mem.tmode = "Cross"
+            mem.cross_mode = self.CROSS_MODES[int(spec[18])]
+        elif int(spec[8]):
+            mem.tmode = "Tone"
+        elif int(spec[9]):
+            mem.tmode = "TSQL"
+        elif int(spec[10]):
+            mem.tmode = "DTCS"
+
+        mem.duplex = self.DUPLEX[int(spec[14])]
+        mem.rtone = chirp_common.TONES[int(spec[15])]
+        mem.ctone = chirp_common.TONES[int(spec[16])]
+        mem.dtcs = chirp_common.DTCS_CODES[int(spec[17])]
+        mem.skip = int(spec[22]) and 'S' or ''
+
+        return mem
+
+    def _make_mem_spec(self, mem):
+        spec = (
+            "%010i" % mem.freq,
+            "%010i" % mem.offset,
+            "%X" % self.STEPS.index(mem.tuning_step),
+            "%X" % self.STEPS.index(mem.tuning_step),
+            "%i" % self.MODES.index(mem.mode),
+            "0",  # Fine mode
+            "0",  # Fine step
+            "%i" % (mem.tmode == "Tone" and 1 or 0),
+            "%i" % (mem.tmode == "TSQL" and 1 or 0),
+            "%i" % (mem.tmode == "DTCS" and 1 or 0),
+            "%i" % (mem.tmode == 'Cross'),
+            "0",  # Reverse
+            "0",  # Odd split channel
+            "%i" % self.DUPLEX.index(mem.duplex),
+            "%02i" % (chirp_common.TONES.index(mem.rtone)),
+            "%02i" % (chirp_common.TONES.index(mem.ctone)),
+            "%03i" % (chirp_common.DTCS_CODES.index(mem.dtcs)),
+            "%i" % self.CROSS_MODES.index(mem.cross_mode),
+            "CQCQCQ",  # URCALL
+            "0",   # D-STAR squelch type
+            "00",  # D-STAR squelch code
+            "%i" % D710_SKIP.index(mem.skip),  # Memory Lockout
+            )
+
+        return spec
+
+
+@directory.register
 class TMV71Radio(TMD710Radio):
     """Kenwood TM-V71"""
     MODEL = "TM-V71"
@@ -1665,7 +1758,7 @@ class TS480Radio(KenwoodLiveRadio):
         mem.number = number
         spec0 = command(self.pipe, "MR0%03i" % mem.number)
         spec1 = command(self.pipe, "MR1%03i" % mem.number)
-        # Add 1 to string idecis if refering to CAT manual
+        # Add 1 to string idecis if referring to CAT manual
         mem.name = spec0[41:49]  # Max 8-Char Name if assigned
         mem.name = mem.name.strip()
         mem.name = mem.name.upper()
